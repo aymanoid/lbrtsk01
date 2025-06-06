@@ -1,10 +1,18 @@
+import regex
 import streamlit as st
 import json
 from docx_parser import extract_articles_from_docx
 from regex_utils import to_split_regex
 from collections import defaultdict
 
-MODES = ["Fewshot examples", "Fewshots rejected", "Transitions only", "Transitions only rejected", "Fewshot examples (JSONL)", "Fewshots finetuning rejected"]
+MODES = [
+    "Fewshot examples",
+    "Fewshots rejected",
+    "Transitions only",
+    "Transitions only rejected",
+    "Fewshot examples (JSONL)",
+    "Fewshots finetuning rejected",
+]
 
 st.title("📄 Structured Transition Triplets Extractor Prototype by Ayman")
 
@@ -16,10 +24,6 @@ if uploaded_file:
 
         st.success(f"Found {len(raw_articles)} article(s)")
 
-        # for i, article in enumerate(raw_articles, 1):
-        #     st.markdown(f"### ✏️ Article {i}")
-        #     st.text_area(label="", value=article, height=200)
-
         fewshot_examples = []
         used_transitions = defaultdict(int)
         transitions_rejected = []
@@ -30,19 +34,23 @@ if uploaded_file:
             lines = article.splitlines()
             try:
                 transitions_index = (
-                    lines.index("Transitions :") if "Transitions :" in lines
-                    else lines.index("Transitions") if "Transitions" in lines
-                    else -1
+                    lines.index("Transitions :")
+                    if "Transitions :" in lines
+                    else lines.index("Transitions") if "Transitions" in lines else -1
                 )
             except ValueError:
                 transitions_index = -1
 
-            transitions = lines[transitions_index + 1:] if transitions_index != -1 else []
+            transitions = (
+                lines[transitions_index + 1 :] if transitions_index != -1 else []
+            )
             large_para = lines[transitions_index - 1] if transitions_index > 0 else None
 
             if not large_para:
                 raise ValueError("Large paragraph not found")
 
+            transition_patterns = []
+            article_transitions = []
             for transition in transitions:
                 total_transitions_count += 1
                 if transition not in transitions_only:
@@ -66,70 +74,148 @@ if uploaded_file:
                         transitions_rejected.append(transition)
                     continue
 
-                split_result = pattern.split(large_para, maxsplit=1)
-                if len(split_result) != 2:
-                    print(f"⚠️ Could not split on: {transition}")
-                    continue
+                transition_patterns.append(pattern)
+                article_transitions.append(transition)
 
-                paragraph_a, paragraph_b = split_result
-                fewshot_examples.append({
-                    "paragraph_a": paragraph_a.strip(),
-                    "transition": transition,
-                    "paragraph_b": paragraph_b.strip(),
-                })
+            if len(transition_patterns) == 0:
+                continue
+
+            master_pattern = regex.compile(
+                "|".join(f"(?:{r.pattern})" for r in transition_patterns),
+                flags=regex.IGNORECASE | regex.UNICODE,
+            )
+            print(f"{master_pattern}")
+            parts = regex.split(master_pattern, large_para)
+            parts = [part.strip() for part in parts if part.strip()]
+            if len(parts) == 2:
+                fewshot_examples.append(
+                    {
+                        "paragraph_a": parts[0],
+                        "transition": article_transitions[0],
+                        "paragraph_b": parts[1],
+                    }
+                )
+            elif len(parts) == 3:
+                fewshot_examples.append(
+                    {
+                        "paragraph_a": parts[0],
+                        "transition": article_transitions[0],
+                        "paragraph_b": parts[1].rsplit(". ", 1)[0] + ".",
+                    }
+                )
+                fewshot_examples.append(
+                    {
+                        "paragraph_a": parts[1].rsplit(". ", 1)[1],
+                        "transition": article_transitions[1],
+                        "paragraph_b": parts[2],
+                    }
+                )
+            elif len(parts) == 4:
+                fewshot_examples.append(
+                    {
+                        "paragraph_a": parts[0],
+                        "transition": article_transitions[0],
+                        "paragraph_b": parts[1].rsplit(". ", 1)[0] + ".",
+                    }
+                )
+                fewshot_examples.append(
+                    {
+                        "paragraph_a": parts[1].rsplit(". ", 1)[1],
+                        "transition": article_transitions[1],
+                        "paragraph_b": parts[2].rsplit(". ", 1)[0] + ".",
+                    }
+                )
+                fewshot_examples.append(
+                    {
+                        "paragraph_a": parts[2].rsplit(". ", 1)[1],
+                        "transition": article_transitions[2],
+                        "paragraph_b": parts[3],
+                    }
+                )
+            else:
+                raise ValueError(
+                    f"Unexpected number of parts: {len(parts)}, Article: {lines[0]}"
+                )
 
         st.success(f"Found {total_transitions_count} transition(s)")
         selected_mode = st.selectbox("Select processing mode", list(MODES))
 
         if selected_mode == "Fewshot examples":
-            st.caption("Extracted triplets with paragraph_a, transition, and paragraph_b (cap each transition at 3 uses)")
+            st.caption(
+                "Extracted triplets with paragraph_a, transition, and paragraph_b (cap each transition at 3 uses)"
+            )
             st.success(f"Found {len(fewshot_examples)} fewshot examples")
             json_data = json.dumps(fewshot_examples, ensure_ascii=False, indent=2)
             st.download_button(
                 label="📥 Download as JSON",
                 data=json_data,
                 file_name="fewshot_examples.json",
-                mime="application/json"
+                mime="application/json",
             )
         elif selected_mode == "Fewshots rejected":
             st.caption("List of transitions used more than 3 times with actual count")
             st.success(f"Found {len(transitions_rejected)} fewshots rejected")
             st.download_button(
                 label="📥 Download as text",
-                data="\n".join([f"{transition} - {used_transitions[transition]}" for transition in transitions_rejected]),
+                data="\n".join(
+                    [
+                        f"{transition} - {used_transitions[transition]}"
+                        for transition in transitions_rejected
+                    ]
+                ),
                 file_name="fewshots_rejected.txt",
-                mime="text/plain"
+                mime="text/plain",
             )
         elif selected_mode == "Transitions only":
-            st.caption("Unique transitions, one per line, taken from the listed transitions under each article")
+            st.caption(
+                "Unique transitions, one per line, taken from the listed transitions under each article"
+            )
             st.success(f"Found {len(transitions_only)} unique transitions")
             st.download_button(
                 label="📥 Download as text",
                 data="\n".join(transitions_only),
                 file_name="transitions_only.txt",
-                mime="text/plain"
+                mime="text/plain",
             )
         elif selected_mode == "Transitions only rejected":
             st.caption("Transitions used more than once, with actual count")
-            st.success(f"Found {len(transitions_used_more_than_once)} transitions used more than once")
+            st.success(
+                f"Found {len(transitions_used_more_than_once)} transitions used more than once"
+            )
             st.download_button(
                 label="📥 Download as text",
-                data="\n".join([f"{transition} - {used_transitions[transition]}" for transition in transitions_used_more_than_once]),
+                data="\n".join(
+                    [
+                        f"{transition} - {used_transitions[transition]}"
+                        for transition in transitions_used_more_than_once
+                    ]
+                ),
                 file_name="transitions_only_rejected.txt",
-                mime="text/plain"
+                mime="text/plain",
             )
         elif selected_mode == "Fewshot examples (JSONL)":
-            st.caption("JSONL format for fine-tuning, using structured messages with role:system, role:user, and role:assistant")
+            st.caption(
+                "JSONL format for fine-tuning, using structured messages with role:system, role:user, and role:assistant"
+            )
             st.success(f"Found {len(fewshot_examples)} fewshot examples")
             st.text("Download is not yet implemented")
         elif selected_mode == "Fewshots finetuning rejected":
-            st.caption("List of transitions used more than 3 times in the fine-tuning format")
-            st.success(f"Found {len(transitions_rejected)} fewshots finetuning rejected")
+            st.caption(
+                "List of transitions used more than 3 times in the fine-tuning format"
+            )
+            st.success(
+                f"Found {len(transitions_rejected)} fewshots finetuning rejected"
+            )
             st.download_button(
                 label="📥 Download as text",
-                data="\n".join([f"{transition} - {used_transitions[transition]}" for transition in transitions_rejected]),
+                data="\n".join(
+                    [
+                        f"{transition} - {used_transitions[transition]}"
+                        for transition in transitions_rejected
+                    ]
+                ),
                 file_name="fewshots-fineTuning_rejected.txt",
-                mime="text/plain"
+                mime="text/plain",
             )
 
     except Exception as e:

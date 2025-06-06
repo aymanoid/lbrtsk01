@@ -1,17 +1,17 @@
-import re
 import regex
+
 
 def to_split_regex(phrase: str) -> regex.Pattern:
     def escape(s: str) -> str:
-        return re.escape(s)
+        return regex.escape(s)
 
     phrase = phrase.replace("[XXX]", "KrexAYplCU")  # Replace placeholder
 
     elision_patterns = {
-        "de": r"(?:de|d'\p{L}+|du|en)",
-        "que": r"(?:que|qu'\p{L}+)",
-        "la": r"(?:la|l'\p{L}+)",
-        "le": r"(?:le|l'\p{L}+)",
+        "de": r"(?:de|d'|du|en)",
+        "que": r"(?:que|qu')",
+        "la": r"(?:la|l')",
+        "le": r"(?:le|l')",
         "à": r"(?:à|au)",
         ",": r",?",
     }
@@ -31,8 +31,7 @@ def to_split_regex(phrase: str) -> regex.Pattern:
 
     pattern = "".join(processed_tokens)
     pattern = (
-        pattern
-        .replace(" KrexAYplCU", r"\s?.*?")
+        pattern.replace(" KrexAYplCU", r"\s?.*?")
         .replace("’", r"['’]")
         # Bandaid fixes
         .replace("des faits", r"des\s?faits")
